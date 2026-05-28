@@ -85,6 +85,12 @@ const StudentProgress = mongoose.model(
   studentProgressSchema,
 );
 const Admin = mongoose.model("Admin", adminSchema);
+const mongoConnectionStates = {
+  0: "disconnected",
+  1: "connected",
+  2: "connecting",
+  3: "disconnecting",
+};
 
 /* =========================
    HELPERS
@@ -134,7 +140,10 @@ async function requireSuperAdmin(req, res, next) {
 ========================= */
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    database: mongoConnectionStates[mongoose.connection.readyState] || "unknown",
+  });
 });
 
 app.get("/tasks", async (_req, res) => {
@@ -323,8 +332,10 @@ if (fs.existsSync(clientDistPath)) {
    START SERVER
 ========================= */
 
-async function start() {
-  await mongoose.connect(MONGODB_URI);
+async function connectDatabase() {
+  await mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+  });
   console.log("Mongo connected");
 
   // ✅ Create FIRST super admin automatically
@@ -341,9 +352,16 @@ async function start() {
     }
   }
 
+}
+
+function start() {
   app.listen(PORT, () =>
     console.log(`Server running on http://localhost:${PORT}`),
   );
+
+  connectDatabase().catch((error) => {
+    console.error("Mongo connection failed:", error.message);
+  });
 }
 
 start();
