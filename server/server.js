@@ -1,20 +1,28 @@
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { loadEnvFile } from "./env.js";
 
 loadEnvFile();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3001);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/task_app";
+const clientDistPath = path.resolve(__dirname, "../tasklist/dist");
+const clientIndexPath = path.join(clientDistPath, "index.html");
 
 const app = express();
 
 app.use(
   cors({
-    origin: CLIENT_ORIGIN,
+    origin: CLIENT_ORIGIN.split(",").map((origin) => origin.trim()),
   }),
 );
 app.use(express.json());
@@ -298,6 +306,18 @@ app.delete("/admin/admins/:email", requireSuperAdmin, async (req, res) => {
   const admins = await Admin.find().lean();
   res.json({ admins });
 });
+
+/* =========================
+   CLIENT APP
+========================= */
+
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+
+  app.get(/.*/, (_req, res) => {
+    res.sendFile(clientIndexPath);
+  });
+}
 
 /* =========================
    START SERVER

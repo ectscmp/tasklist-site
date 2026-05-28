@@ -3,7 +3,9 @@ import { useMsal } from "@azure/msal-react";
 import { loginRequest } from "./authConfig";
 import "./App.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "" : "http://localhost:3001");
 const ADMIN_REFRESH_MS = 5000;
 const THEME_STORAGE_KEY = "tasklist-theme";
 const ratingLabels = ["Not covered", "Introduced", "Developing", "Mastery"];

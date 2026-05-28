@@ -1,1 +1,9 @@
 .env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+tasklist/dist/
+server/node_modules/
+tasklist/node_modules/
