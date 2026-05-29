@@ -8,7 +8,13 @@ const API =
   (import.meta.env.PROD ? "" : "http://localhost:3001");
 const ADMIN_REFRESH_MS = 5000;
 const THEME_STORAGE_KEY = "tasklist-theme";
-const ratingLabels = ["Not covered", "Introduced", "Developing", "Mastery"];
+const ratingLabels = ["Unsure", "Introduced", "Developing", "Mastery"];
+const groupLabels = {
+  year1: "Year 1",
+  year2: "Year 2",
+  year3: "Year 3",
+  unassigned: "Unassigned",
+};
 function toResponseMap(responseList = []) {
   return responseList.reduce((accumulator, response) => {
     accumulator[response.taskId] = response;
@@ -90,6 +96,17 @@ function buildTaskStudentRatings(taskId, students = []) {
       const rightName = String(right.displayName || right.email).toLowerCase();
       return leftName.localeCompare(rightName);
     });
+}
+
+function downloadBlob(blob, filename) {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }
 
 // ─────────────────────────────────────────────
@@ -558,7 +575,9 @@ function AdminStudentListItem({ student, selected, onSelect }) {
     >
       <div className="student-list-main">
         <strong>{student.displayName || student.email}</strong>
-        <span className="muted-copy">{student.email}</span>
+        <span className="muted-copy">
+          {student.email} · {student.groupLabel || groupLabels.unassigned}
+        </span>
       </div>
       <div className="student-list-metrics">
         <span>{student.completionCount} rated</span>
@@ -568,7 +587,7 @@ function AdminStudentListItem({ student, selected, onSelect }) {
   );
 }
 
-function AdminStudentDetail({ student }) {
+function AdminStudentDetail({ student, onUpdateGroup, groupSaving }) {
   const submittedResponses = sortTasksByNumber(
     student.responses.filter(
       (response) =>
@@ -586,6 +605,20 @@ function AdminStudentDetail({ student }) {
         </div>
         <span className="task-state live">{formatDate(student.updatedAt)}</span>
       </div>
+
+      <label className="inline-field">
+        <span>Group</span>
+        <select
+          value={student.group || ""}
+          onChange={(event) => onUpdateGroup(student.email, event.target.value)}
+          disabled={groupSaving}
+        >
+          <option value="">Unassigned</option>
+          <option value="year1">Year 1</option>
+          <option value="year2">Year 2</option>
+          <option value="year3">Year 3</option>
+        </select>
+      </label>
 
       <div className="coverage-grid compact">
         <span className="coverage-pill neutral">
@@ -642,6 +675,85 @@ function AdminStudentDetail({ student }) {
   );
 }
 
+function GroupReportCard({ report, onDownload }) {
+  return (
+    <article className="admin-card group-report-card">
+      <div className="task-card-header">
+        <div>
+          <h3>{report.label}</h3>
+          <p className="muted-copy">
+            {report.studentCount} students · {report.submittedRatings} ratings
+          </p>
+        </div>
+        <button
+          type="button"
+          className="secondary-button compact-button"
+          onClick={() => onDownload(report.key === "unassigned" ? "" : report.key)}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      <div className="coverage-grid compact">
+        <span className="coverage-pill neutral">
+          <strong>{report.studentCount}</strong>
+          <small>Students</small>
+        </span>
+        <span className="coverage-pill neutral">
+          <strong>{report.submittedRatings}</strong>
+          <small>Ratings</small>
+        </span>
+        <span className="coverage-pill success">
+          <strong>
+            {report.averageScore === null ? "—" : report.averageScore.toFixed(2)}
+          </strong>
+          <small>Average</small>
+        </span>
+      </div>
+
+      <div className="compact-report-list">
+        {report.taskAverages.map((taskAverage) => (
+          <div
+            key={`${report.key}-${taskAverage.taskId}`}
+            className="compact-report-row"
+          >
+            <strong>
+              Task {taskAverage.taskId}: {taskAverage.title}
+            </strong>
+            <span className="muted-copy">
+              {taskAverage.averageScore === null
+                ? "No ratings"
+                : `Avg ${taskAverage.averageScore.toFixed(2)} · ${taskAverage.responseCount} ratings`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function AdminTaskManagerItem({ task, selected, onSelect }) {
+  return (
+    <button
+      type="button"
+      className={
+        selected ? "student-list-item task-list-item active" : "student-list-item task-list-item"
+      }
+      onClick={() => onSelect(task._id)}
+    >
+      <div className="student-list-main">
+        <strong>
+          Task {task._id}: {task.title}
+        </strong>
+        <span className="muted-copy">
+          {task.resources?.course ? "Course link" : "No course"} ·{" "}
+          {task.resources?.video ? "Video link" : "No video"}
+        </span>
+      </div>
+    </button>
+  );
+}
+
 // ─────────────────────────────────────────────
 // APP ROOT
 // ─────────────────────────────────────────────
@@ -667,6 +779,18 @@ function App() {
   const [adminSearch, setAdminSearch] = useState("");
   const [selectedStudentEmail, setSelectedStudentEmail] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedManagedTaskId, setSelectedManagedTaskId] = useState("");
+  const [reportGroupFilter, setReportGroupFilter] = useState("");
+  const [adminCompact, setAdminCompact] = useState(true);
+  const [groupSavingEmail, setGroupSavingEmail] = useState("");
+  const [taskEditorMode, setTaskEditorMode] = useState("edit");
+  const [taskEditorState, setTaskEditorState] = useState("idle");
+  const [taskDraft, setTaskDraft] = useState({
+    taskId: "",
+    title: "",
+    course: "",
+    video: "",
+  });
 
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") return "light";
@@ -761,69 +885,59 @@ function App() {
     };
   }, [userEmail]);
 
-  // Load admin data (polls when in admin view)
-  useEffect(() => {
-    let cancelled = false;
-    let intervalId = null;
+  async function refreshAdminData(showLoading = true) {
+    if (!userEmail) {
+      setAdminData(null);
+      setUserRole(false);
+      setViewMode("student");
+      setLastAdminRefresh(null);
+      return;
+    }
 
-    async function loadAdminData(showLoading) {
-      if (!userEmail) {
-        setAdminData(null);
+    if (showLoading) setAdminLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API}/admin/overview?email=${encodeURIComponent(userEmail)}`,
+      );
+
+      if (response.status === 403 || response.status === 401) {
         setUserRole(false);
+        setAdminData(null);
         setViewMode("student");
-        setLastAdminRefresh(null);
         return;
       }
 
-      if (showLoading) setAdminLoading(true);
+      if (!response.ok) throw new Error("Unable to load admin reporting.");
 
-      try {
-        const response = await fetch(
-          `${API}/admin/overview?email=${encodeURIComponent(userEmail)}`,
-        );
-
-        if (response.status === 403 || response.status === 401) {
-          if (!cancelled) {
-            setUserRole(false);
-            setAdminData(null);
-            setViewMode("student");
-          }
-          return;
-        }
-
-        if (!response.ok) throw new Error("Unable to load admin reporting.");
-
-        const data = await response.json();
-
-        if (!cancelled) {
-          // Backend should return role: "admin" | "superAdmin" | false
-          const role = data.role || (data.isAdmin ? "admin" : false);
-          setUserRole(role);
-          setAdminData(data);
-          setLastAdminRefresh(new Date().toISOString());
-        }
-      } catch (loadError) {
-        if (!cancelled)
-          setError(loadError.message || "Unable to load admin reporting.");
-      } finally {
-        if (!cancelled && showLoading) setAdminLoading(false);
-      }
+      const data = await response.json();
+      const role = data.role || (data.isAdmin ? "admin" : false);
+      setUserRole(role);
+      setAdminData(data);
+      setLastAdminRefresh(new Date().toISOString());
+    } catch (loadError) {
+      setError(loadError.message || "Unable to load admin reporting.");
+    } finally {
+      if (showLoading) setAdminLoading(false);
     }
+  }
 
-    loadAdminData(true);
+  // Load admin data (polls when in admin view)
+  useEffect(() => {
+    let intervalId = null;
+    const initialLoadId = window.setTimeout(() => {
+      refreshAdminData(true);
+    }, 0);
 
     if (
       userEmail &&
       (isAdmin || viewMode === "admin" || viewMode === "superAdmin")
     ) {
-      intervalId = window.setInterval(
-        () => loadAdminData(false),
-        ADMIN_REFRESH_MS,
-      );
+      intervalId = window.setInterval(() => refreshAdminData(false), ADMIN_REFRESH_MS);
     }
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(initialLoadId);
       if (intervalId) window.clearInterval(intervalId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -914,6 +1028,50 @@ function App() {
     };
   }, [adminData?.students, filteredTaskCoverage, selectedTaskId]);
 
+  const availableAdminTasks = useMemo(
+    () => sortTasksByNumber(adminData?.tasks || [], (task) => task._id),
+    [adminData?.tasks],
+  );
+
+  const selectedManagedTask = useMemo(() => {
+    if (availableAdminTasks.length === 0) return null;
+    return (
+      availableAdminTasks.find((task) => task._id === selectedManagedTaskId) ||
+      availableAdminTasks[0]
+    );
+  }, [availableAdminTasks, selectedManagedTaskId]);
+
+  const visibleGroupReports = useMemo(() => {
+    const reports = adminData?.groupReports || [];
+    if (!reportGroupFilter) return reports;
+    return reports.filter((report) => report.key === reportGroupFilter);
+  }, [adminData?.groupReports, reportGroupFilter]);
+
+  useEffect(() => {
+    const syncDraftId = window.setTimeout(() => {
+    if (taskEditorMode !== "edit") return;
+
+    if (!selectedManagedTask) {
+      setTaskDraft({
+        taskId: "",
+        title: "",
+        course: "",
+        video: "",
+      });
+      return;
+    }
+
+    setTaskDraft({
+      taskId: selectedManagedTask._id,
+      title: selectedManagedTask.title || "",
+      course: selectedManagedTask.resources?.course || "",
+      video: selectedManagedTask.resources?.video || "",
+    });
+    }, 0);
+
+    return () => window.clearTimeout(syncDraftId);
+  }, [selectedManagedTask, taskEditorMode]);
+
   async function saveResponse(taskId, rating, evidenceText) {
     if (!userEmail) return;
     const evidenceLinks = textareaValueToLinks(evidenceText);
@@ -955,6 +1113,121 @@ function App() {
     } catch (saveError) {
       setSaveState((c) => ({ ...c, [taskId]: "error" }));
       setError(saveError.message || "Unable to save this task right now.");
+    }
+  }
+
+  async function handleUpdateStudentGroup(email, group) {
+    if (!userEmail) return;
+    setGroupSavingEmail(email);
+    setError("");
+
+    try {
+      const response = await fetch(
+        `${API}/admin/students/${encodeURIComponent(email)}/group?email=${encodeURIComponent(userEmail)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ group }),
+        },
+      );
+
+      if (!response.ok) throw new Error("Unable to update student group.");
+      await refreshAdminData(false);
+    } catch (groupError) {
+      setError(groupError.message || "Unable to update student group.");
+    } finally {
+      setGroupSavingEmail("");
+    }
+  }
+
+  async function handleDownloadReport(group = "") {
+    if (!userEmail) return;
+
+    try {
+      const query = new URLSearchParams({ email: userEmail });
+      if (group) query.set("group", group);
+      const response = await fetch(`${API}/admin/report.csv?${query.toString()}`);
+      if (!response.ok) throw new Error("Unable to download report.");
+      const blob = await response.blob();
+      downloadBlob(blob, `${group || "all-groups"}-task-report.csv`);
+    } catch (reportError) {
+      setError(reportError.message || "Unable to download report.");
+    }
+  }
+
+  function startCreateTask() {
+    setTaskEditorMode("create");
+    setTaskDraft({
+      taskId: "",
+      title: "",
+      course: "",
+      video: "",
+    });
+    setSelectedManagedTaskId("");
+  }
+
+  function startEditTask(task) {
+    setTaskEditorMode("edit");
+    setSelectedManagedTaskId(task?._id || "");
+  }
+
+  async function handleSaveTask() {
+    if (!userEmail) return;
+    setTaskEditorState("saving");
+    setError("");
+
+    try {
+      const endpoint =
+        taskEditorMode === "create"
+          ? `${API}/admin/tasks?email=${encodeURIComponent(userEmail)}`
+          : `${API}/admin/tasks/${encodeURIComponent(taskDraft.taskId)}?email=${encodeURIComponent(userEmail)}`;
+      const method = taskEditorMode === "create" ? "POST" : "PUT";
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(taskDraft),
+      });
+
+      if (!response.ok) throw new Error("Unable to save task.");
+
+      const data = await response.json();
+      setTasks(data.tasks || []);
+      if (taskEditorMode === "create") {
+        setSelectedManagedTaskId(taskDraft.taskId);
+        setTaskEditorMode("edit");
+      }
+      setTaskEditorState("saved");
+      await refreshAdminData(false);
+      window.setTimeout(() => setTaskEditorState("idle"), 1500);
+    } catch (taskError) {
+      setTaskEditorState("error");
+      setError(taskError.message || "Unable to save task.");
+    }
+  }
+
+  async function handleDeleteTask() {
+    if (!userEmail || !selectedManagedTask) return;
+    setTaskEditorState("saving");
+    setError("");
+
+    try {
+      const response = await fetch(
+        `${API}/admin/tasks/${encodeURIComponent(selectedManagedTask._id)}?email=${encodeURIComponent(userEmail)}`,
+        { method: "DELETE" },
+      );
+
+      if (!response.ok) throw new Error("Unable to delete task.");
+
+      const data = await response.json();
+      setTasks(data.tasks || []);
+      setSelectedManagedTaskId("");
+      setTaskEditorState("saved");
+      await refreshAdminData(false);
+      window.setTimeout(() => setTaskEditorState("idle"), 1500);
+    } catch (taskError) {
+      setTaskEditorState("error");
+      setError(taskError.message || "Unable to delete task.");
     }
   }
 
@@ -1123,7 +1396,11 @@ function App() {
               <p>Gathering student submissions and task coverage.</p>
             </section>
           ) : (
-            <div className="admin-layout">
+            <div
+              className={
+                adminCompact ? "admin-layout compact-admin-layout" : "admin-layout"
+              }
+            >
               <section className="admin-section">
                 <div className="section-heading">
                   <h2>Search</h2>
@@ -1131,15 +1408,66 @@ function App() {
                     Filter students, tasks, or evidence links from one place.
                   </p>
                 </div>
-                <label className="search-block">
-                  <span className="sr-only">Search admin dashboard</span>
-                  <input
-                    type="search"
-                    value={adminSearch}
-                    onChange={(e) => setAdminSearch(e.target.value)}
-                    placeholder="Search students, tasks, or links"
-                  />
-                </label>
+                <div className="admin-toolbar">
+                  <label className="search-block">
+                    <span className="sr-only">Search admin dashboard</span>
+                    <input
+                      type="search"
+                      value={adminSearch}
+                      onChange={(e) => setAdminSearch(e.target.value)}
+                      placeholder="Search students, tasks, or links"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    onClick={() => setAdminCompact((current) => !current)}
+                  >
+                    {adminCompact ? "Expanded view" : "Compact view"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    onClick={() => handleDownloadReport("")}
+                  >
+                    Download full CSV
+                  </button>
+                </div>
+              </section>
+
+              <section className="admin-section">
+                <div className="section-heading">
+                  <h2>Group reports</h2>
+                  <p className="muted-copy">
+                    Average scores by cohort, plus downloadable CSV reports.
+                  </p>
+                </div>
+                <div className="reports-toolbar">
+                  <label className="inline-field">
+                    <span>Filter group</span>
+                    <select
+                      value={reportGroupFilter}
+                      onChange={(event) => setReportGroupFilter(event.target.value)}
+                    >
+                      <option value="">All groups</option>
+                      {(adminData.groups || []).map((group) => (
+                        <option key={group.key} value={group.key}>
+                          {group.label}
+                        </option>
+                      ))}
+                      <option value="unassigned">Unassigned</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="group-report-grid">
+                  {visibleGroupReports.map((report) => (
+                    <GroupReportCard
+                      key={report.key}
+                      report={report}
+                      onDownload={handleDownloadReport}
+                    />
+                  ))}
+                </div>
               </section>
 
               <section className="admin-section">
@@ -1205,7 +1533,11 @@ function App() {
                   </div>
                   <div className="student-detail-panel">
                     {selectedStudent ? (
-                      <AdminStudentDetail student={selectedStudent} />
+                      <AdminStudentDetail
+                        student={selectedStudent}
+                        onUpdateGroup={handleUpdateStudentGroup}
+                        groupSaving={groupSavingEmail === selectedStudent.email}
+                      />
                     ) : (
                       <section className="empty-state">
                         <h2>No student selected</h2>
@@ -1214,6 +1546,146 @@ function App() {
                         </p>
                       </section>
                     )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="admin-section">
+                <div className="section-heading">
+                  <h2>Manage tasks</h2>
+                  <p className="muted-copy">
+                    Add new tasks or update existing titles and resource links.
+                  </p>
+                </div>
+                <div className="admin-student-layout admin-task-layout">
+                  <div className="student-list task-list">
+                    <button
+                      type="button"
+                      className={
+                        taskEditorMode === "create"
+                          ? "student-list-item task-list-item active"
+                          : "student-list-item task-list-item"
+                      }
+                      onClick={startCreateTask}
+                    >
+                      <div className="student-list-main">
+                        <strong>Add task</strong>
+                        <span className="muted-copy">
+                          Create a new numbered task
+                        </span>
+                      </div>
+                    </button>
+                    {availableAdminTasks.map((task) => (
+                      <AdminTaskManagerItem
+                        key={task._id}
+                        task={task}
+                        selected={
+                          taskEditorMode === "edit" &&
+                          task._id === selectedManagedTask?._id
+                        }
+                        onSelect={() => startEditTask(task)}
+                      />
+                    ))}
+                  </div>
+                  <div className="student-detail-panel">
+                    <article className="admin-card">
+                      <div className="task-card-header">
+                        <div>
+                          <h3>
+                            {taskEditorMode === "create"
+                              ? "Create task"
+                              : `Edit task ${selectedManagedTask?._id || ""}`}
+                          </h3>
+                          <p className="muted-copy">
+                            {taskEditorMode === "create"
+                              ? "Add a task number, title, and optional learning links."
+                              : "Update the selected task or remove it entirely."}
+                          </p>
+                        </div>
+                        <span className={`task-state ${taskEditorState}`}>
+                          {taskEditorState === "saving" && "Saving..."}
+                          {taskEditorState === "saved" && "Saved"}
+                          {taskEditorState === "error" && "Retry needed"}
+                          {taskEditorState === "idle" && "Ready"}
+                        </span>
+                      </div>
+
+                      <div className="task-editor-grid">
+                        <label className="inline-field">
+                          <span>Task number</span>
+                          <input
+                            type="text"
+                            value={taskDraft.taskId}
+                            onChange={(event) =>
+                              setTaskDraft((current) => ({
+                                ...current,
+                                taskId: event.target.value,
+                              }))
+                            }
+                            disabled={taskEditorMode === "edit"}
+                          />
+                        </label>
+                        <label className="inline-field">
+                          <span>Title</span>
+                          <input
+                            type="text"
+                            value={taskDraft.title}
+                            onChange={(event) =>
+                              setTaskDraft((current) => ({
+                                ...current,
+                                title: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="inline-field">
+                          <span>Course link</span>
+                          <input
+                            type="url"
+                            value={taskDraft.course}
+                            onChange={(event) =>
+                              setTaskDraft((current) => ({
+                                ...current,
+                                course: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="inline-field">
+                          <span>Video link</span>
+                          <input
+                            type="url"
+                            value={taskDraft.video}
+                            onChange={(event) =>
+                              setTaskDraft((current) => ({
+                                ...current,
+                                video: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="task-editor-actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={handleSaveTask}
+                          disabled={!taskDraft.taskId.trim() || !taskDraft.title.trim()}
+                        >
+                          {taskEditorMode === "create" ? "Create task" : "Save changes"}
+                        </button>
+                        {taskEditorMode === "edit" ? (
+                          <button
+                            type="button"
+                            className="secondary-button danger-button"
+                            onClick={handleDeleteTask}
+                          >
+                            Delete task
+                          </button>
+                        ) : null}
+                      </div>
+                    </article>
                   </div>
                 </div>
               </section>

@@ -391,6 +391,57 @@ body {
   border-color: var(--focus-border);
 }
 
+.admin-toolbar,
+.reports-toolbar,
+.task-editor-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.search-block {
+  flex: 1 1 280px;
+}
+
+.compact-button,
+.danger-button {
+  padding: 0.72rem 0.9rem;
+}
+
+.danger-button {
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.inline-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.inline-field span {
+  font-size: 0.82rem;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.inline-field input,
+.inline-field select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-h);
+  padding: 0.7rem 0.8rem;
+  font: inherit;
+}
+
+.inline-field input:focus-visible,
+.inline-field select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  border-color: var(--focus-border);
+}
+
 /* ─────────────────────────────────────────────
    DASHBOARD / STATUS BANNERS
    ───────────────────────────────────────────── */
@@ -599,10 +650,50 @@ body {
   padding-top: 0;
 }
 
+.compact-admin-layout {
+  gap: 0.85rem;
+}
+
 .admin-card h3 {
   margin: 0;
   color: var(--text-h);
   font-size: 1rem;
+}
+
+.group-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.85rem;
+}
+
+.group-report-card {
+  gap: 0.75rem;
+}
+
+.compact-report-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.compact-report-row {
+  display: grid;
+  gap: 0.15rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--divider-soft);
+}
+
+.compact-report-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.task-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 /* ─────────────────────────────────────────────
@@ -1081,6 +1172,25 @@ body {
    ───────────────────────────────────────────── */
 
 @media (max-width: 720px) {
+  .hero-panel,
+  .admin-student-layout,
+  .admin-task-layout,
+  .task-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-banner,
+  .admin-toolbar,
+  .reports-toolbar,
+  .task-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-block {
+    flex-basis: auto;
+  }
+
   .superadmin-add-row {
     grid-template-columns: 1fr;
   }
